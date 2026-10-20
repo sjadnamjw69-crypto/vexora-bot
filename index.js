@@ -79,7 +79,7 @@ function backKeyboard() {
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
+  return String(value).replace(/[&<>"']/g, char => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
@@ -116,49 +116,11 @@ function productKeyboard(type) {
   return { reply_markup: { inline_keyboard: rows } };
 }
 
-bot.onText(/^\/start(?:@\w+)?$/, (msg) => {
-  userStates.delete(msg.from.id);
-  sendHome(msg.chat.id);
-});
-
-bot.onText(/^\/help(?:@\w+)?$/, (msg) => {
-  bot.sendMessage(
-    msg.chat.id,
-    "📚 <b>راهنمای VEXORA</b>\n\n" +
-    "/start — منوی اصلی\n" +
-    "/shop — فروشگاه\n" +
-    "/orders — سفارش‌های من\n" +
-    "/support — پشتیبانی\n\n" +
-    `🎧 پشتیبانی: ${SUPPORT}`,
-    { parse_mode: "HTML", ...backKeyboard() }
-  );
-});
-
-bot.onText(/^\/shop(?:@\w+)?$/, (msg) => sendHome(msg.chat.id));
-
-bot.onText(/^\/orders(?:@\w+)?$/, (msg) => {
-  showMyOrders(msg.chat.id, msg.from.id);
-});
-
-bot.onText(/^\/support(?:@\w+)?$/, (msg) => {
-  bot.sendMessage(
-    msg.chat.id,
-    `🎧 پشتیبانی VEXORA\n\nبرای کمک و پیگیری سفارش به این آیدی پیام بده:\n${SUPPORT}`,
-    backKeyboard()
-  );
-});
-
 function showMyOrders(chatId, userId) {
-  const mine = [...orders.values()].filter(
-    order => order.userId === userId
-  );
+  const mine = [...orders.values()].filter(order => order.userId === userId);
 
   if (!mine.length) {
-    return bot.sendMessage(
-      chatId,
-      "📦 هنوز سفارشی ثبت نکردی.",
-      backKeyboard()
-    );
+    return bot.sendMessage(chatId, "📦 هنوز سفارشی ثبت نکردی.", backKeyboard());
   }
 
   const text = mine.map(order =>
@@ -168,14 +130,17 @@ function showMyOrders(chatId, userId) {
     `📌 وضعیت: ${escapeHtml(order.status)}`
   ).join("\n\n");
 
-  bot.sendMessage(chatId, "📦 <b>سفارش‌های تو</b>\n\n" + text, {
+  return bot.sendMessage(chatId, "📦 <b>سفارش‌های تو</b>\n\n" + text, {
     parse_mode: "HTML",
     ...backKeyboard()
   });
 }
 
 async function notifyAdmin(order) {
-  if (!ADMIN_ID) return;
+  if (!ADMIN_ID) {
+    console.log("ADMIN_ID تنظیم نشده است؛ سفارش:", order.id);
+    return;
+  }
 
   const text =
     "🛎️ <b>سفارش جدید VEXORA</b>\n\n" +
@@ -183,6 +148,7 @@ async function notifyAdmin(order) {
     `👤 کاربر: ${escapeHtml(order.name)}\n` +
     `🆔 آیدی عددی: <code>${order.userId}</code>\n` +
     `📦 محصول: ${escapeHtml(order.product)}\n` +
+    `🎯 مقصد: ${escapeHtml(order.target)}\n` +
     `💰 مبلغ: ${order.price ? order.price.toLocaleString("fa-IR") + " تومان" : "قیمت تعیین نشده"}\n` +
     `📌 وضعیت: ${escapeHtml(order.status)}`;
 
@@ -199,7 +165,46 @@ async function notifyAdmin(order) {
   }).catch(err => console.error("خطای ارسال به ادمین:", err.message));
 }
 
-bot.on("callback_query", async (query) => {
+bot.onText(/^\/start(?:@\w+)?$/, msg => {
+  userStates.delete(msg.from.id);
+  sendHome(msg.chat.id);
+});
+
+bot.onText(/^\/help(?:@\w+)?$/, msg => {
+  bot.sendMessage(
+    msg.chat.id,
+    "📚 <b>راهنمای VEXORA</b>\n\n" +
+    "/start — منوی اصلی\n" +
+    "/shop — فروشگاه\n" +
+    "/orders — سفارش‌های من\n" +
+    "/support — پشتیبانی\n\n" +
+    `🎧 پشتیبانی: ${SUPPORT}`,
+    { parse_mode: "HTML", ...backKeyboard() }
+  );
+});
+
+bot.onText(/^\/shop(?:@\w+)?$/, msg => sendHome(msg.chat.id));
+
+bot.onText(/^\/orders(?:@\w+)?$/, msg => {
+  showMyOrders(msg.chat.id, msg.from.id);
+});
+
+bot.onText(/^\/support(?:@\w+)?$/, msg => {
+  bot.sendMessage(
+    msg.chat.id,
+    `🎧 پشتیبانی VEXORA\n\nبرای کمک و پیگیری سفارش به این آیدی پیام بده:\n${SUPPORT}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "💬 ارتباط با پشتیبانی", url: "https://t.me/Vexorini" }],
+          [{ text: "⬅️ منوی اصلی", callback_data: "home" }]
+        ]
+      }
+    }
+  );
+});
+
+bot.on("callback_query", async query => {
   const chatId = query.message.chat.id;
   const userId = query.from.id;
   const action = query.data;
@@ -239,15 +244,13 @@ bot.on("callback_query", async (query) => {
 
   if (action.startsWith("choose_")) {
     const [, type, indexText] = action.split("_");
-    const index = Number(indexText);
     const product = products[type];
-    const option = product?.options[index];
+    const option = product?.options[Number(indexText)];
 
     if (!option) return;
 
     userStates.set(userId, {
       step: "waiting_target",
-      type,
       product: `${product.name} — ${option.label}`,
       price: option.price
     });
@@ -258,7 +261,6 @@ bot.on("callback_query", async (query) => {
       `محصول: ${escapeHtml(option.label)}\n\n` +
       "لطفاً آیدی تلگرام مقصد رو بفرست؛ مثلاً:\n" +
       "<code>@username</code>\n\n" +
-      "اگر برای محصولت به اطلاعات دیگری نیاز باشه، پشتیبانی راهنمایی می‌کنه.\n\n" +
       "⚠️ رمز عبور یا کد ورود تلگرامت رو هرگز ارسال نکن.",
       {
         parse_mode: "HTML",
@@ -276,17 +278,11 @@ bot.on("callback_query", async (query) => {
     return bot.sendMessage(chatId, "سفارش لغو شد.", mainKeyboard());
   }
 
-  if (action === "myorders") {
-    return showMyOrders(chatId, userId);
-  }
+  if (action === "myorders") return showMyOrders(chatId, userId);
 
   if (action === "track") {
     userStates.set(userId, { step: "waiting_order_id" });
-    return bot.sendMessage(
-      chatId,
-      "🔎 کد سفارش رو بفرست؛ مثلاً VX1234ABCD",
-      backKeyboard()
-    );
+    return bot.sendMessage(chatId, "🔎 کد سفارش رو بفرست؛ مثلاً VX1234ABCD", backKeyboard());
   }
 
   if (action === "payment") {
@@ -304,18 +300,14 @@ bot.on("callback_query", async (query) => {
   }
 
   if (action === "support") {
-    return bot.sendMessage(
-      chatId,
-      `🎧 پشتیبانی VEXORA\n\n${SUPPORT}`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "💬 ارتباط با پشتیبانی", url: "https://t.me/Vexorini" }],
-            [{ text: "⬅️ منوی اصلی", callback_data: "home" }]
-          ]
-        }
+    return bot.sendMessage(chatId, `🎧 پشتیبانی VEXORA\n\n${SUPPORT}`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "💬 ارتباط با پشتیبانی", url: "https://t.me/Vexorini" }],
+          [{ text: "⬅️ منوی اصلی", callback_data: "home" }]
+        ]
       }
-    );
+    });
   }
 
   if (action.startsWith("admin_done_") || action.startsWith("admin_reject_")) {
@@ -327,9 +319,7 @@ bot.on("callback_query", async (query) => {
     const orderId = action.replace(/^admin_(done|reject)_/, "");
     const order = orders.get(orderId);
 
-    if (!order) {
-      return bot.sendMessage(chatId, "سفارش پیدا نشد.");
-    }
+    if (!order) return bot.sendMessage(chatId, "سفارش پیدا نشد.");
 
     order.status = isDone ? "تأییدشده توسط مدیر؛ تحویل را جداگانه بررسی کنید" : "رد شده";
 
@@ -342,7 +332,7 @@ bot.on("callback_query", async (query) => {
   }
 });
 
-bot.on("message", async (msg) => {
+bot.on("message", async msg => {
   if (!msg.text || msg.text.startsWith("/")) return;
 
   const userId = msg.from.id;
@@ -358,11 +348,7 @@ bot.on("message", async (msg) => {
     userStates.delete(userId);
 
     if (!order || order.userId !== userId) {
-      return bot.sendMessage(
-        chatId,
-        "❌ سفارشی با این کد برای حساب تو پیدا نشد.",
-        mainKeyboard()
-      );
+      return bot.sendMessage(chatId, "❌ سفارشی با این کد برای حساب تو پیدا نشد.", mainKeyboard());
     }
 
     return bot.sendMessage(
@@ -411,7 +397,7 @@ bot.on("message", async (msg) => {
   }
 });
 
-bot.on("polling_error", (error) => {
+bot.on("polling_error", error => {
   console.error("Telegram polling error:", error.message);
 });
 
